@@ -1,0 +1,4 @@
+interface:
+  display_name: "BJTU HPC Submit"
+  short_description: "Refresh auth, submit, verify CPU/GRES, and monitor BJTU HPC jobs"
+  default_prompt: "Use $bjtu-hpc-submit to refresh BJTU HPC auth, submit or inspect jobs, verify native Slurm CPU/GRES allocation and pending reasons, monitor transfer progress, and collect job evidence without exposing secrets."
