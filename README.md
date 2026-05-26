@@ -79,3 +79,7 @@ Before publishing, the skill was stripped of:
 - tokens, cookies, passwords, and one-time certificate strings
 
 If you fork this repository, keep those constraints in place before committing local modifications.
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
