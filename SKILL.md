@@ -1,6 +1,6 @@
 ---
 name: bjtu-hpc-submit
-description: Use when an agent needs to refresh/save BJTU HPC portal auth, add or switch BJTU portal accounts/tokens, run a local transfer dashboard, upload code or data, submit CPU/GPU jobs, inspect job status including GPU counts, monitor resumable dataset uploads, or probe the runtime environment from a BJTU HPC helper workspace.
+description: Use when an agent needs to refresh/save BJTU HPC portal auth, add or switch BJTU portal accounts/tokens, run a local transfer dashboard, upload/download files, reuse shared datasets across accounts, copy account-local runtime environments, schedule two execution-slot experiments plus two queued follow-up experiments per saved account, submit CPU/GPU jobs, inspect job status including GPU counts, monitor resumable dataset uploads, or probe the runtime environment from a BJTU HPC helper workspace.
 ---
 
 # BJTU HPC Submit
@@ -31,6 +31,8 @@ cd "$SLURM_DIR"
 ## Entry Points
 
 - Start with `hpc_doctor.py --json`; it checks dependencies, account state, browser profile, and token validity without printing secrets.
+- For a local GUI, run `hpc_transfer_web.py` from the helper workspace and open the reported localhost URL.
+- Upload and download through helper wrappers such as `hpc_upload.py` and `hpc_download.py`; include `--auth-account <name>` when scripts support it.
 - For portal-app jobs, prefer verified submit wrappers over raw submit scripts when available.
 - For CPU/GRES-sensitive jobs, prefer uploaded native `sbatch` scripts over portal-generated PyTorch app scripts, then verify native Slurm allocation.
 - For MCP clients, prefer tools that expose auth status, submit-and-verify, pending reason, allocation verification, stdout tailing, and SFTP info.
@@ -52,6 +54,23 @@ cd "$PROJECT_DIR"
 - Never print portal tokens, cookies, temporary certificates, passwords, or captured browser storage.
 - Treat portal codes `11009`, `11011`, and `11012` as expired or invalid auth.
 - Treat portal HTTP `401`, token-validation transport errors, and missing profile tokens as auth-blocked for user-requested live status until a fresh validation succeeds. Stale snapshots may be reported only as `last trusted`.
+
+### Multi-Account Tokens
+
+Use `hpc_accounts.py` for account-local tokens instead of copying a legacy token file between users:
+
+```bash
+cd "$SLURM_DIR"
+"$PY" hpc_accounts.py list
+"$PY" hpc_accounts.py add <account_name> --refresh --browser playwright --fresh-page --timeout 600
+"$PY" hpc_accounts.py refresh <account_name> --browser playwright --headless --fresh-page
+"$PY" hpc_accounts.py validate <account_name>
+"$PY" hpc_accounts.py use <account_name>
+```
+
+- Adding or refreshing an account should discover the portal user, cluster, and cluster OS account from the portal token when the helper supports it. Do not copy metadata from another saved account unless the user explicitly provides it.
+- Do not sync a secondary account into `~/.bjtu_hpc_token` unless the user intentionally wants to change the legacy default.
+- Use `--auth-account <account_name>` on every submit, job-list, upload, download, or proxy-info command in a multi-account workflow.
 
 ### Auth Recovery State Machine
 
@@ -100,6 +119,7 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 - If the command exits with `timed out waiting for token in visible browser`, first run `hpc_accounts.py validate <account_name>`. If validation succeeds, continue; if it still fails, rerun the integrated `--visible-only` flow once.
 - Use `--force --visible-only --no-profile-probe-before-visible` only after one integrated attempt exits without a usable token and validation still fails, or when the user explicitly requests a visible login window. Do not use this as the first attempt.
 - If the second visible attempt still fails to save a usable token, report the auth/token-save failure as the blocker and keep live status at the latest trusted snapshot.
+- If a visible Playwright window was closed by the user but the command appears stuck, poll the PTY and process list, then validate the same account or run a headless profile refresh before opening another visible browser. A closed browser window is not by itself proof that token extraction failed.
 
 ## Job Rules
 
@@ -152,6 +172,44 @@ cd "$PROJECT_DIR"
 6. Verify `JobState=RUNNING`, `Reason=None`, CPU fields, GPU TRES, and node name.
 7. Tail child logs and verify that each child reports one visible CUDA device and has entered real training before calling the launch successful.
 
+## Account Scheduling
+
+For experiment batches, treat each saved portal account as having two execution slots and two queued follow-up slots:
+
+```text
+per account: 2 run-slot experiments + 2 queued follow-up experiments
+```
+
+- A run-slot experiment is one of the first two non-terminal experiments assigned to an account and intended to run as soon as resources permit.
+- A queued follow-up experiment is an additional submitted experiment kept as backlog so the scheduler can start it after earlier work finishes.
+- `DONE`, `FAILED`, and `CANCELLED` jobs no longer count toward either slot type.
+- Before launching a batch, list saved accounts and inspect current jobs for each candidate account:
+
+```bash
+cd "$SLURM_DIR"
+"$PY" hpc_accounts.py list
+"$PY" hpc_jobs.py list --auth-account <account_a> --scope current --size 50 --paths
+"$PY" hpc_jobs.py list --auth-account <account_b> --scope current --size 50 --paths
+```
+
+- Fill each account's two run slots first, then allow up to two queued follow-ups for that same account. Do not submit a fifth non-terminal experiment under the same account unless the user explicitly overrides the cap.
+- Submit each job with an explicit auth account and a job name that encodes the experiment and slot:
+
+```bash
+"$PY" hpc_submit.py ./train_exp_a.py --auth-account <account_a> --app gpu --gpu 1 \
+  --job-name exp-a-account-a-slot1 --submit
+"$PY" hpc_submit.py ./train_exp_b.py --auth-account <account_a> --app gpu --gpu 1 \
+  --job-name exp-b-account-a-slot2 --submit
+"$PY" hpc_submit.py ./train_exp_c.py --auth-account <account_a> --app gpu --gpu 1 \
+  --job-name exp-c-account-a-q1 --submit
+"$PY" hpc_submit.py ./train_exp_d.py --auth-account <account_a> --app gpu --gpu 1 \
+  --job-name exp-d-account-a-q2 --submit
+```
+
+- If strict "start after the previous experiment finishes" ordering is required, use native Slurm dependencies such as `--dependency=afterany:<job_id>` through the SSH/native `sbatch` path. Plain portal submissions may become runnable immediately if scheduler and QOS limits allow them.
+- If `QOSMaxJobsPerUserLimit` blocks two single-GPU run slots for one account, use one native packed job with `--gres=gpu:2` and two child launches as the fallback. Pack only two experiments per account unless the user explicitly approves more.
+- If queued follow-up submissions hit a submit cap such as `QOSMaxSubmitJobPerUserLimit`, record them in the local launch plan and submit when a run slot clears instead of retrying in a loop.
+
 ## Paths
 
 - Portal SSH/SFTP should go through the helper's SFTP-info command. Do not hardcode one-time certificate tokens.
@@ -178,6 +236,59 @@ Download pattern:
 - Never run two upload workers writing the same `.part` file.
 - When a source host is slow or unreliable, use cluster-side file size/progress as the source of truth.
 
+## Dataset Reuse
+
+Reuse an existing cluster dataset across accounts instead of uploading another copy when filesystem permissions can safely allow it.
+
+- Treat the portal Web "file share" UI as portal-managed share metadata, not as a reliable general-purpose way to expose arbitrary existing dataset paths to another cluster account.
+- Observed frontend routes may include:
+
+```text
+GET  /pcp/clusters/{cluster}/file/share/list
+POST /pcp/clusters/{cluster}/file/share
+GET  /pcp/clusters/{cluster}/file/share/cancel?id=...
+```
+
+- If the helper has `hpc_share_check.py`, first inspect the source account, dataset root, and target cluster OS user in dry-run mode:
+
+```bash
+cd "$SLURM_DIR"
+"$PY" hpc_share_check.py \
+  --auth-account <source_auth_account> \
+  --data-root /data/home/<source_cluster_user>/dataset/<dataset_name> \
+  --target-user <target_cluster_user>
+```
+
+- Prefer the minimum permission that works. If the dataset subtree is already readable/executable by group or other users and only the source home directory blocks traversal, grant the target user execute-only traversal on the source home directory. If the dataset subtree blocks reads, apply read-only ACLs only after confirming the exact source path and target user.
+- Always verify as the target account before launching real training. A direct proxy SSH read test is sufficient for filesystem access; a small CPU job-side probe is better when queue time is acceptable.
+- After access is verified, optionally create a target-home symlink so training configs can use an account-local-looking path:
+
+```bash
+mkdir -p /data/home/<target_cluster_user>/dataset
+ln -sfn /data/home/<source_cluster_user>/dataset/<dataset_name> \
+  /data/home/<target_cluster_user>/dataset/<dataset_name>
+```
+
+- Use real cluster OS account names for filesystem permissions and paths. Portal usernames may differ from cluster OS users.
+
+## Account-Local Environments
+
+Shared datasets may cross account boundaries through ACLs or symlinks, but Python and conda runtime environments should live under the account that runs the job.
+
+- Do not launch a target account's jobs with another account's Python, conda, cache, code, or output path.
+- Copy or rebuild the environment under the target cluster OS account home, for example `/data/home/<target_cluster_user>/envs/<env_name>`.
+- When cloning an existing conda environment across accounts, run the clone as the target cluster OS user and force real file copies with `--copy`; default conda clones may use hardlinks:
+
+```bash
+SRC=/data/home/<source_cluster_user>/envs/<env_name>
+DST=/data/home/<target_cluster_user>/envs/<env_name>
+CONDA=/data/home/<source_cluster_user>/software/miniconda3/bin/conda
+mkdir -p /data/home/<target_cluster_user>/envs
+"$CONDA" create --copy -y -p "$DST" --clone "$SRC"
+```
+
+- Verify owner, executable path, package imports, and sample inodes before using the copied environment. Login-node `torch.cuda.is_available()` may be false; use a GPU job-side probe when CUDA runtime availability matters.
+
 ## Post-Submit Evidence Checklist
 
 Before reporting a job as running:
@@ -192,4 +303,6 @@ Before reporting a job as running:
 ## Safety
 
 - For cross-account dataset sharing, inspect ACLs first; do not apply ACL/chmod changes without explicit confirmation.
+- Multi-account launches must keep account-local code, outputs, and environments under the corresponding cluster OS home. Shared datasets can cross accounts by ACL or symlink, but runtime paths should not cross accounts.
+- For experiment batches, cap each saved auth account at two run-slot experiments plus two queued follow-up experiments unless the user explicitly overrides the cap.
 - Do not publish tokens, cookies, passwords, one-time certificate strings, local absolute paths, student ids, or project-specific job evidence.
