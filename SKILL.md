@@ -33,8 +33,8 @@ cd "$SLURM_DIR"
 - Start with `hpc_doctor.py --json`; it checks dependencies, account state, browser profile, and token validity without printing secrets.
 - For a local GUI, run `hpc_transfer_web.py` from the helper workspace and open the reported localhost URL.
 - Upload and download through helper wrappers such as `hpc_upload.py` and `hpc_download.py`; include `--auth-account <name>` when scripts support it.
-- For portal-app jobs, prefer verified submit wrappers over raw submit scripts when available.
-- For CPU/GRES-sensitive jobs, prefer uploaded native `sbatch` scripts over portal-generated PyTorch app scripts, then verify native Slurm allocation.
+- Use portal-app submit wrappers only for resource-shape-compatible jobs or lightweight probes. Prefer verified wrappers over raw submit scripts when a portal app is used.
+- For CPU/GRES-sensitive jobs, use uploaded native `sbatch` scripts through the portal SSH path instead of portal-generated PyTorch app scripts, then verify native Slurm allocation.
 - For MCP clients, prefer tools that expose auth status, submit-and-verify, pending reason, allocation verification, stdout tailing, and SFTP info.
 
 Useful status commands:
@@ -123,13 +123,13 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 
 ## Job Rules
 
-- Default single-process GPU shape on `cluster2`:
+- Target single-process GPU shape on `cluster2` for native Slurm:
 
 ```text
 --gpu 1 --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding
 ```
 
-- For normal GPU training submissions, force `--gres-flags disable-binding` and allocate `8`-`16` CPU cores per training task. Default to `8`; use `12` or `16` only when dataloading or preprocessing benefits from more CPU. Do not request more than `16` CPU cores per task unless the user explicitly asks for a diagnostic probe or a high-CPU override.
+- For normal GPU training submissions through native Slurm, force `--gres-flags disable-binding` and allocate `8`-`16` CPU cores per training task. Default to `8`; use `12` or `16` only when dataloading or preprocessing benefits from more CPU. Do not request more than `16` CPU cores per task unless the user explicitly asks for a diagnostic probe or a high-CPU override.
 - Native Slurm equivalent for one GPU:
 
 ```bash
@@ -139,10 +139,12 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 #SBATCH --gres-flags=disable-binding
 ```
 
+- Portal PyTorch/GPU app templates may accept CPU/GRES fields in the local submit payload but omit those directives from the generated Slurm script. Treat portal-app CPU/GRES fields as advisory until native Slurm proves otherwise.
 - Request more GPUs only when the code actually uses them.
 - Avoid `--gpu 1 --ntasks 8` without `--gres-flags disable-binding`; it can produce `BadConstraints`.
 - After every submit, verify the portal job row. If the job is `PENDING`, report the native Slurm `Reason`, not just portal state.
 - If CPU/GRES shape matters, verify native `NumCPUs`, `NumTasks`, `CPUs/Task`, and GPU TRES with `scontrol`; portal request fields are not enough.
+- Verified portal submit wrappers must resolve the real Slurm job id from either the immediate `job` row or the delayed `wait.job` row when `--wait` is used. If no Slurm id is found, or native allocation mismatches the requested CPU/GRES shape, mark the launch failed even when the portal API returned success.
 - Do not cancel unrelated jobs. For per-user job-count limits, inspect existing jobs before canceling anything.
 - Always run `sbatch --test-only` for a new native script or a new resource shape before real submission.
 
@@ -195,21 +197,41 @@ cd "$SLURM_DIR"
 ```
 
 - Fill each account's two run slots first, then allow up to two queued follow-ups for that same account. Do not submit a fifth non-terminal experiment under the same account unless the user explicitly overrides the cap.
-- Submit each GPU training job with an explicit auth account, `--gres-flags disable-binding`, `--ntasks 1`, and `--cpus-per-task` in the range `8`-`16`. Make the job name encode the experiment and slot:
+- Submit each CPU/GRES-sensitive GPU training job as a native Slurm script with explicit project and Python paths, `--gres-flags=disable-binding`, `--ntasks=1`, and `--cpus-per-task` in the range `8`-`16`. Make the job name encode the experiment and slot.
+
+Example `exp-a-account-a-slot1.sbatch`:
 
 ```bash
-"$PY" hpc_submit.py ./train_exp_a.py --auth-account <account_a> --app gpu --gpu 1 \
+#!/bin/bash
+#SBATCH --job-name=exp-a-account-a-slot1
+#SBATCH --partition=GPU
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:1
+#SBATCH --gres-flags=disable-binding
+#SBATCH --output=logs/%x-%j.out
+#SBATCH --error=logs/%x-%j.out
+
+set -euo pipefail
+cd /path/to/your/project
+exec /path/to/python3 train_exp_a.py
+```
+
+Submit and verify natively:
+
+```bash
+sbatch --test-only exp-a-account-a-slot1.sbatch
+JOB_ID=$(sbatch --parsable exp-a-account-a-slot1.sbatch)
+scontrol show job "$JOB_ID"
+```
+
+- Portal app submission remains acceptable for compatibility probes and non-critical resource shapes, but it must be followed by native allocation verification:
+
+```bash
+"$PY" hpc_submit_verified.py ./gpu_probe.py --auth-account <account_a> --app gpu --gpu 1 \
   --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding \
-  --job-name exp-a-account-a-slot1 --submit
-"$PY" hpc_submit.py ./train_exp_b.py --auth-account <account_a> --app gpu --gpu 1 \
-  --ntasks 1 --cpus-per-task 12 --gres-flags disable-binding \
-  --job-name exp-b-account-a-slot2 --submit
-"$PY" hpc_submit.py ./train_exp_c.py --auth-account <account_a> --app gpu --gpu 1 \
-  --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding \
-  --job-name exp-c-account-a-q1 --submit
-"$PY" hpc_submit.py ./train_exp_d.py --auth-account <account_a> --app gpu --gpu 1 \
-  --ntasks 1 --cpus-per-task 12 --gres-flags disable-binding \
-  --job-name exp-d-account-a-q2 --submit
+  --job-name gpu-compat-probe --submit --wait
 ```
 
 - If strict "start after the previous experiment finishes" ordering is required, use native Slurm dependencies such as `--dependency=afterany:<job_id>` through the SSH/native `sbatch` path. Plain portal submissions may become runnable immediately if scheduler and QOS limits allow them.
@@ -299,7 +321,7 @@ mkdir -p /data/home/<target_cluster_user>/envs
 
 Before reporting a job as running:
 
-- Portal row is present and the expected job id, GPU count, CPU count, and node are recorded.
+- Native Slurm job id is known. If using a portal app, the portal row is also recorded.
 - Native Slurm reason was checked.
 - CPU/GPU allocation matches the intended shape.
 - Startup logs were downloaded or tailed locally.
@@ -311,5 +333,6 @@ Before reporting a job as running:
 - For cross-account dataset sharing, inspect ACLs first; do not apply ACL/chmod changes without explicit confirmation.
 - Multi-account launches must keep account-local code, outputs, and environments under the corresponding cluster OS home. Shared datasets can cross accounts by ACL or symlink, but runtime paths should not cross accounts.
 - For experiment batches, cap each saved auth account at two run-slot experiments plus two queued follow-up experiments unless the user explicitly overrides the cap.
-- For GPU training submissions, force `--gres-flags disable-binding` and keep each training task at `8`-`16` CPU cores unless the user explicitly requests a diagnostic probe or high-CPU override.
+- For CPU/GRES-sensitive GPU training, use native Slurm, force `--gres-flags=disable-binding`, and keep each training task at `8`-`16` CPU cores unless the user explicitly requests a diagnostic probe or high-CPU override.
+- Do not rely on portal PyTorch/GPU app templates to enforce `--cpus-per-task` or `--gres-flags`; verify with native Slurm or treat the resource shape as untrusted.
 - Do not publish tokens, cookies, passwords, one-time certificate strings, local absolute paths, student ids, or project-specific job evidence.

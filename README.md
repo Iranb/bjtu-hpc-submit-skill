@@ -15,7 +15,7 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Dataset reuse across cluster accounts through verified filesystem permissions or ACLs.
 - Account-local runtime environment copies for cross-account runs.
 - Portal job status checks and native Slurm pending-reason checks.
-- CPU/GRES-safe GPU job submission rules, including forced `--gres-flags disable-binding`.
+- CPU/GRES-safe GPU job submission rules, including native Slurm verification and forced `--gres-flags=disable-binding`.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
 - Evidence capture for job tables, native allocation snapshots, stdout tails, and launch logs.
 
@@ -46,6 +46,7 @@ The skill assumes you have a local BJTU helper workspace that provides scripts s
 - `hpc_jobs.py`
 - `hpc_pending_reason.py`
 - `hpc_submit.py`
+- `hpc_submit_verified.py`
 - `hpc_upload.py`
 - `hpc_download.py`
 - `hpc_winscp_info.py`
@@ -91,13 +92,17 @@ per saved account: 2 run-slot experiments + 2 queued follow-up experiments
 
 Use `--auth-account <name>` for every submit and status command, keep code/output/environment paths inside the corresponding cluster OS account home, and share only datasets through verified filesystem permissions or symlinks.
 
-Default GPU training shape:
+Target native Slurm GPU training shape:
 
 ```bash
 --gpu 1 --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding
 ```
 
-For normal training, keep `--gres-flags disable-binding` and allocate `8`-`16` CPU cores per training task. Use `12` or `16` only when dataloading or preprocessing needs more CPU.
+For normal training, keep `--gres-flags=disable-binding` and allocate `8`-`16` CPU cores per training task. Use `12` or `16` only when dataloading or preprocessing needs more CPU.
+
+CPU/GRES-sensitive training should use a native `sbatch` script and then verify `NumCPUs`, `NumTasks`, `CPUs/Task`, and GPU TRES with `scontrol show job <job_id>`. Portal PyTorch/GPU app templates may accept CPU/GRES fields in the helper payload but drop those directives from the generated Slurm script, so portal request fields are not proof of allocation.
+
+If you must use a portal app wrapper, use a verified submit path and require it to resolve the native Slurm id from either the immediate job row or `wait.job` when `--wait` is used. Missing Slurm id or allocation mismatch should be treated as a failed launch.
 
 ## Sanitization
 
