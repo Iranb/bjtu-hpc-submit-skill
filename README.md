@@ -15,7 +15,7 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Dataset reuse across cluster accounts through verified filesystem permissions or ACLs.
 - Account-local runtime environment copies for cross-account runs.
 - Portal job status checks and native Slurm pending-reason checks.
-- CPU/GRES-safe GPU job submission rules.
+- CPU/GRES-safe GPU job submission rules, including forced `--gres-flags disable-binding`.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
 - Evidence capture for job tables, native allocation snapshots, stdout tails, and launch logs.
 
@@ -90,6 +90,14 @@ per saved account: 2 run-slot experiments + 2 queued follow-up experiments
 ```
 
 Use `--auth-account <name>` for every submit and status command, keep code/output/environment paths inside the corresponding cluster OS account home, and share only datasets through verified filesystem permissions or symlinks.
+
+Default GPU training shape:
+
+```bash
+--gpu 1 --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding
+```
+
+For normal training, keep `--gres-flags disable-binding` and allocate `8`-`16` CPU cores per training task. Use `12` or `16` only when dataloading or preprocessing needs more CPU.
 
 ## Sanitization
 

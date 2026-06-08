@@ -129,6 +129,7 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 --gpu 1 --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding
 ```
 
+- For normal GPU training submissions, force `--gres-flags disable-binding` and allocate `8`-`16` CPU cores per training task. Default to `8`; use `12` or `16` only when dataloading or preprocessing benefits from more CPU. Do not request more than `16` CPU cores per task unless the user explicitly asks for a diagnostic probe or a high-CPU override.
 - Native Slurm equivalent for one GPU:
 
 ```bash
@@ -148,8 +149,9 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 Known-good shapes on `cluster2`:
 
 ```text
-1 GPU single process: --ntasks=1 --cpus-per-task=8 --gres=gpu:1 --gres-flags=disable-binding
-2 GPU packed job:     --ntasks=1 --cpus-per-task=8 --gres=gpu:2 --gres-flags=disable-binding
+1 GPU single process: --ntasks=1 --cpus-per-task=8  --gres=gpu:1 --gres-flags=disable-binding
+1 GPU CPU-heavy:      --ntasks=1 --cpus-per-task=16 --gres=gpu:1 --gres-flags=disable-binding
+2 GPU packed job:     --ntasks=1 --cpus-per-task=16 --gres=gpu:2 --gres-flags=disable-binding
 ```
 
 ## Native Slurm Packed Jobs
@@ -158,7 +160,7 @@ Use packed jobs only when one Slurm allocation intentionally launches multiple c
 
 Checklist:
 
-1. Request one batch allocation with the required GPU count, for example `--gres=gpu:2`, `--ntasks=1`, `--cpus-per-task=8`, and `--gres-flags=disable-binding`.
+1. Request one batch allocation with the required GPU count, `--gres-flags=disable-binding`, and enough CPU for all child experiments. For two single-GPU children, request `--gres=gpu:2`, `--ntasks=1`, and `--cpus-per-task=16`-`32`, which gives `8`-`16` CPU cores per child.
 2. In the batch script, read allocation-provided `CUDA_VISIBLE_DEVICES` and split it into child lanes. Do not hardcode physical `0/1`.
 3. For each child, set `CUDA_VISIBLE_DEVICES` to exactly one allocated id, run lightweight `nvidia-smi` and `torch.cuda.device_count()` checks, then launch the experiment.
 4. Save a batch stdout plus one child log per lane.
@@ -193,21 +195,25 @@ cd "$SLURM_DIR"
 ```
 
 - Fill each account's two run slots first, then allow up to two queued follow-ups for that same account. Do not submit a fifth non-terminal experiment under the same account unless the user explicitly overrides the cap.
-- Submit each job with an explicit auth account and a job name that encodes the experiment and slot:
+- Submit each GPU training job with an explicit auth account, `--gres-flags disable-binding`, `--ntasks 1`, and `--cpus-per-task` in the range `8`-`16`. Make the job name encode the experiment and slot:
 
 ```bash
 "$PY" hpc_submit.py ./train_exp_a.py --auth-account <account_a> --app gpu --gpu 1 \
+  --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding \
   --job-name exp-a-account-a-slot1 --submit
 "$PY" hpc_submit.py ./train_exp_b.py --auth-account <account_a> --app gpu --gpu 1 \
+  --ntasks 1 --cpus-per-task 12 --gres-flags disable-binding \
   --job-name exp-b-account-a-slot2 --submit
 "$PY" hpc_submit.py ./train_exp_c.py --auth-account <account_a> --app gpu --gpu 1 \
+  --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding \
   --job-name exp-c-account-a-q1 --submit
 "$PY" hpc_submit.py ./train_exp_d.py --auth-account <account_a> --app gpu --gpu 1 \
+  --ntasks 1 --cpus-per-task 12 --gres-flags disable-binding \
   --job-name exp-d-account-a-q2 --submit
 ```
 
 - If strict "start after the previous experiment finishes" ordering is required, use native Slurm dependencies such as `--dependency=afterany:<job_id>` through the SSH/native `sbatch` path. Plain portal submissions may become runnable immediately if scheduler and QOS limits allow them.
-- If `QOSMaxJobsPerUserLimit` blocks two single-GPU run slots for one account, use one native packed job with `--gres=gpu:2` and two child launches as the fallback. Pack only two experiments per account unless the user explicitly approves more.
+- If `QOSMaxJobsPerUserLimit` blocks two single-GPU run slots for one account, use one native packed job with `--gres=gpu:2 --gres-flags=disable-binding` and `8`-`16` CPU cores per child experiment as the fallback. Pack only two experiments per account unless the user explicitly approves more.
 - If queued follow-up submissions hit a submit cap such as `QOSMaxSubmitJobPerUserLimit`, record them in the local launch plan and submit when a run slot clears instead of retrying in a loop.
 
 ## Paths
@@ -305,4 +311,5 @@ Before reporting a job as running:
 - For cross-account dataset sharing, inspect ACLs first; do not apply ACL/chmod changes without explicit confirmation.
 - Multi-account launches must keep account-local code, outputs, and environments under the corresponding cluster OS home. Shared datasets can cross accounts by ACL or symlink, but runtime paths should not cross accounts.
 - For experiment batches, cap each saved auth account at two run-slot experiments plus two queued follow-up experiments unless the user explicitly overrides the cap.
+- For GPU training submissions, force `--gres-flags disable-binding` and keep each training task at `8`-`16` CPU cores unless the user explicitly requests a diagnostic probe or high-CPU override.
 - Do not publish tokens, cookies, passwords, one-time certificate strings, local absolute paths, student ids, or project-specific job evidence.
