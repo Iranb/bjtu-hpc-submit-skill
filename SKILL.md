@@ -54,6 +54,16 @@ cd "$PROJECT_DIR"
 - Never print portal tokens, cookies, temporary certificates, passwords, or captured browser storage.
 - Treat portal codes `11009`, `11011`, and `11012` as expired or invalid auth.
 - Treat portal HTTP `401`, token-validation transport errors, and missing profile tokens as auth-blocked for user-requested live status until a fresh validation succeeds. Stale snapshots may be reported only as `last trusted`.
+- If the user explicitly asks for a captcha/verification-code-only login flow, save CAS login credentials only through the local helper, with user-specific values supplied at runtime:
+
+```bash
+cd "$SLURM_DIR"
+"$PY" hpc_credentials.py set <account_name> --login-name <portal_user>
+"$PY" hpc_credentials.py list
+```
+
+  The helper should store credentials only on the controller machine with restrictive file permissions. Never commit credentials, passwords, browser storage, portal tokens, or temporary certificates to Git.
+- Auth refresh is not an experiment launch. If an expired token blocks a user-requested BJTU status, progress, upload, download, pending-reason, or submit check, run the integrated visible refresh flow immediately unless the user explicitly forbids token refresh or browser use.
 
 ### Multi-Account Tokens
 
@@ -120,6 +130,7 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 - Use `--force --visible-only --no-profile-probe-before-visible` only after one integrated attempt exits without a usable token and validation still fails, or when the user explicitly requests a visible login window. Do not use this as the first attempt.
 - If the second visible attempt still fails to save a usable token, report the auth/token-save failure as the blocker and keep live status at the latest trusted snapshot.
 - If a visible Playwright window was closed by the user but the command appears stuck, poll the PTY and process list, then validate the same account or run a headless profile refresh before opening another visible browser. A closed browser window is not by itself proof that token extraction failed.
+- If a visible-browser timeout occurs, first try a headless refresh from the same selected account profile, then validate the account. The user may already have completed CAS login and left a usable token in the browser profile.
 
 ## Job Rules
 
@@ -133,6 +144,8 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 - Native Slurm equivalent for one GPU:
 
 ```bash
+#SBATCH --partition=GPU
+#SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
@@ -140,10 +153,12 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 ```
 
 - Portal PyTorch/GPU app templates may accept CPU/GRES fields in the local submit payload but omit those directives from the generated Slurm script. Treat portal-app CPU/GRES fields as advisory until native Slurm proves otherwise.
+- Do not use portal-app GPU submissions for evidence-producing training when CPU/GRES shape matters. Use native `sbatch`, then verify the real Slurm job id with `scontrol show job <job_id>`.
 - Request more GPUs only when the code actually uses them.
 - Avoid `--gpu 1 --ntasks 8` without `--gres-flags disable-binding`; it can produce `BadConstraints`.
 - After every submit, verify the portal job row. If the job is `PENDING`, report the native Slurm `Reason`, not just portal state.
 - If CPU/GRES shape matters, verify native `NumCPUs`, `NumTasks`, `CPUs/Task`, and GPU TRES with `scontrol`; portal request fields are not enough.
+- If a supposed GPU training launch reports `NumCPUs=1`, `CPUs/Task=1`, and `gres/gpu=1`, classify it as wrong-shape immediately. Do not count it as a valid evidence-producing run unless the user explicitly accepts the degraded allocation.
 - Verified portal submit wrappers must resolve the real Slurm job id from either the immediate `job` row or the delayed `wait.job` row when `--wait` is used. If no Slurm id is found, or native allocation mismatches the requested CPU/GRES shape, mark the launch failed even when the portal API returned success.
 - Do not cancel unrelated jobs. For per-user job-count limits, inspect existing jobs before canceling anything.
 - Always run `sbatch --test-only` for a new native script or a new resource shape before real submission.
@@ -198,6 +213,18 @@ cd "$SLURM_DIR"
 
 - Fill each account's two run slots first, then allow up to two queued follow-ups for that same account. Do not submit a fifth non-terminal experiment under the same account unless the user explicitly overrides the cap.
 - Submit each CPU/GRES-sensitive GPU training job as a native Slurm script with explicit project and Python paths, `--gres-flags=disable-binding`, `--ntasks=1`, and `--cpus-per-task` in the range `8`-`16`. Make the job name encode the experiment and slot.
+- Distinguish submit limits from run limits. A third job may be accepted by `sbatch` but remain pending because the user's current run limit is full. Native pending reason `QOSMaxJobsPerUserLimit` usually means a running-job cap, not necessarily a submit cap.
+- To test whether another submit would be accepted without starting work or touching existing jobs, use a unique held native probe and cancel it immediately:
+
+```bash
+sbatch --test-only <probe>.sbatch
+PROBE_JOB_ID=$(sbatch --hold --parsable <probe>.sbatch)
+squeue -j "$PROBE_JOB_ID"
+scancel "$PROBE_JOB_ID"
+squeue -j "$PROBE_JOB_ID"
+```
+
+  The probe script should request the same partition/resource shape being tested, use a very short time limit, and have a unique name such as `submit-cap-probe-YYYYMMDDHHMMSS`. A held probe should show `JobHeldUser` before cancellation and disappear from `squeue` after cancellation. Never cancel or modify unrelated jobs during this check.
 
 Example `exp-a-account-a-slot1.sbatch`:
 

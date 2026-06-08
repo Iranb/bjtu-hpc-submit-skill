@@ -1,4 +1,4 @@
 interface:
   display_name: "BJTU HPC Submit"
   short_description: "Manage BJTU HPC auth, data reuse, multi-account runs, and job evidence"
-  default_prompt: "Use $bjtu-hpc-submit to refresh BJTU HPC auth, manage saved portal accounts, reuse shared datasets safely, keep runtime environments account-local, submit up to two run-slot and two queued experiments per account, verify native Slurm CPU/GRES allocation and pending reasons, monitor transfer progress, and collect job evidence without exposing secrets."
+  default_prompt: "Use $bjtu-hpc-submit to refresh BJTU HPC auth, manage saved portal accounts, reuse shared datasets safely, keep runtime environments account-local, submit up to two run-slot and two queued experiments per account, test submit capacity with held-and-cancelled sbatch probes, verify native Slurm CPU/GRES allocation and pending reasons, monitor transfer progress, and collect job evidence without exposing secrets."

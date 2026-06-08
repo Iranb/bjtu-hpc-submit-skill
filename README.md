@@ -17,6 +17,7 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Portal job status checks and native Slurm pending-reason checks.
 - CPU/GRES-safe GPU job submission rules, including native Slurm verification and forced `--gres-flags=disable-binding`.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
+- Safe `sbatch --hold` submit-cap probes that are immediately cancelled and do not start work.
 - Evidence capture for job tables, native allocation snapshots, stdout tails, and launch logs.
 
 ## Install
@@ -91,6 +92,18 @@ per saved account: 2 run-slot experiments + 2 queued follow-up experiments
 ```
 
 Use `--auth-account <name>` for every submit and status command, keep code/output/environment paths inside the corresponding cluster OS account home, and share only datasets through verified filesystem permissions or symlinks.
+
+When checking whether an account can submit one more job, distinguish submit acceptance from run-slot availability. A job may be accepted by `sbatch` but remain pending with a native reason such as `QOSMaxJobsPerUserLimit`. Use a unique held probe when you need to test submit capacity without disturbing existing runs:
+
+```bash
+sbatch --test-only <probe>.sbatch
+PROBE_JOB_ID=$(sbatch --hold --parsable <probe>.sbatch)
+squeue -j "$PROBE_JOB_ID"
+scancel "$PROBE_JOB_ID"
+squeue -j "$PROBE_JOB_ID"
+```
+
+The probe should have a unique name, short time limit, and the same resource shape being tested. It should be cancelled immediately and should not replace or cancel any unrelated job.
 
 Target native Slurm GPU training shape:
 
