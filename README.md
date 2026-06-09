@@ -108,10 +108,10 @@ The probe should have a unique name, short time limit, and the same resource sha
 Target native Slurm GPU training shape:
 
 ```bash
---gpu 1 --ntasks 1 --cpus-per-task 8 --gres-flags disable-binding
+--gpu 1 --ntasks 1 --cpus-per-task 16 --gres-flags disable-binding
 ```
 
-For normal training, keep `--gres-flags=disable-binding` and allocate `8`-`16` CPU cores per training task. Use `12` or `16` only when dataloading or preprocessing needs more CPU.
+For normal training, keep `--gres-flags=disable-binding` and start with `16` CPU cores per training task. If `sbatch --test-only` or scheduler constraints reject `16`, retry with `12`, then `8`; treat `8` as the minimum for evidence-producing GPU training.
 
 CPU/GRES-sensitive training should use a native `sbatch` script and then verify `NumCPUs`, `NumTasks`, `CPUs/Task`, and GPU TRES with `scontrol show job <job_id>`. Portal PyTorch/GPU app templates may accept CPU/GRES fields in the helper payload but drop those directives from the generated Slurm script, so portal request fields are not proof of allocation.
 
