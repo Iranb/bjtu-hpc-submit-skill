@@ -11,6 +11,7 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - BJTU portal token validation and recovery.
 - Multi-account token management through `hpc_accounts.py`.
 - Playwright profile-based token refresh with visible-login fallback.
+- Local dashboard and Token Guardian operating rules.
 - Two run-slot experiments plus two queued follow-up experiments per saved account.
 - Dataset reuse across cluster accounts through verified filesystem permissions or ACLs.
 - Account-local runtime environment copies for cross-account runs.
@@ -60,6 +61,14 @@ PY=/path/to/python3
 SLURM_DIR=/path/to/bjtu-hpc-helper
 PROJECT_DIR=/path/to/your/project
 ```
+
+## Dashboard And Token Guardian
+
+The local dashboard can manage saved CAS logins, refresh and validate portal tokens, create resumable upload tasks, launch uploads, show cluster-side progress, and list portal jobs. Saved passwords must stay in a local credentials store with restrictive permissions; the UI should only show whether a password exists.
+
+Token Guardian is a background validator and best-effort headless refresher. Use a conservative default of a 300 second validation interval and a 1800 second refresh threshold. Treat a headless refresh as actually successful only when validation succeeds and the saved token changes or the account `token_updated_at` advances. If headless refresh times out while final validation still succeeds, the old token is still usable but renewal was not proven.
+
+In multi-account workflows, upload tasks should include `auth_account` so launch commands, SFTP certificate lookup, and progress checks use the correct saved account instead of hardcoded defaults. If the dashboard is installed as a user service, service status output should be redacted before printing raw environment or service-manager details.
 
 ## Recommended Auth Flow
 
