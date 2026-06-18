@@ -46,6 +46,17 @@ cd "$PROJECT_DIR"
 "$PY" "$SLURM_DIR/hpc_pending_reason.py" <slurm_job_id> --no-sinfo
 ```
 
+## Dashboard And Guardian
+
+- Use `hpc_transfer_web.py` for local dashboard workflows: token validation, visible token refresh, saved CAS login management, upload task creation, resumable upload launch, upload progress, and portal job listing.
+- The dashboard's saved-login UI must store credentials only in the local credential helper/store with restrictive permissions. It must never display saved passwords; it may only show whether a password exists.
+- Upload tasks should carry an optional `auth_account` field. Launch commands, SFTP certificate lookup, and cluster-side progress checks should use that task account instead of hardcoded portal users or cluster OS accounts.
+- When progress is queried for multiple upload tasks, group checks by `auth_account` so each task is inspected through the correct saved account. Legacy tasks without `auth_account` may use the current default saved account.
+- Use the Token Guardian only after each selected account has completed at least one visible CAS login and has a usable account-local Playwright profile.
+- Conservative guardian defaults are a 300 second validation interval and a 1800 second headless-refresh threshold. Shorter intervals should be treated as diagnostic probes, not normal background policy.
+- To keep the dashboard and guardian alive outside a terminal, prefer a per-user LaunchAgent or equivalent user service. Run it as the same OS user that owns the Playwright profiles and `~/.bjtu_hpc_*` stores.
+- Service status commands must redact environment variables, tokens, cookies, passwords, certificates, and long token-like strings before printing raw service manager output.
+
 ## Auth
 
 - Saved accounts usually live in `~/.bjtu_hpc_accounts.json`; a legacy single-token cache may live in `~/.bjtu_hpc_token`.
@@ -63,6 +74,7 @@ cd "$SLURM_DIR"
 ```
 
   The helper should store credentials only on the controller machine with restrictive file permissions. Never commit credentials, passwords, browser storage, portal tokens, or temporary certificates to Git.
+- Account stores, credential stores, and legacy token files should be written with a lock plus atomic same-directory replacement. Do not truncate-and-write these JSON or token files directly when a dashboard, guardian, and CLI may update them concurrently.
 - Auth refresh is not an experiment launch. If an expired token blocks a user-requested BJTU status, progress, upload, download, pending-reason, or submit check, run the integrated visible refresh flow immediately unless the user explicitly forbids token refresh or browser use.
 
 ### Multi-Account Tokens
@@ -81,6 +93,14 @@ cd "$SLURM_DIR"
 - Adding or refreshing an account should discover the portal user, cluster, and cluster OS account from the portal token when the helper supports it. Do not copy metadata from another saved account unless the user explicitly provides it.
 - Do not sync a secondary account into `~/.bjtu_hpc_token` unless the user intentionally wants to change the legacy default.
 - Use `--auth-account <account_name>` on every submit, job-list, upload, download, or proxy-info command in a multi-account workflow.
+
+### Token Guardian Interpretation
+
+- Headless guardian refresh is best-effort. It can validate an existing token and attempt profile-based renewal, but it cannot create a fresh CAS session when the profile no longer has a usable CAS/OAuth state.
+- A successful keepalive/renewal must be evidenced by a fresh validation plus either `token_changed=true` or an advanced account `token_updated_at` timestamp. A status like `valid_refresh_failed` means the old saved token still validates, but the attempted headless renewal did not prove a new token was issued.
+- If final validation fails with expired-token portal codes, HTTP `401`, or token-validation transport errors, mark the account as needing visible login and run the integrated visible flow for that account.
+- Use guardian logs only for redacted status summaries. They should contain event names, account aliases, reasons, final validation status, and sanitized errors; they should not contain token values, passwords, localStorage dumps, or temporary certificates.
+- To estimate token longevity, use saved account metadata such as `token_updated_at` plus redacted probe logs. Report ranges such as "at least X and less than Y" when the probe interval only bounds the expiry time.
 
 ### Auth Recovery State Machine
 
@@ -288,6 +308,7 @@ Download pattern:
 ## Dataset Upload
 
 - Prefer resumable, chunked uploads for large datasets.
+- Use `--auth-account <account_name>` for uploads and progress checks in multi-account workflows. Do not infer the cluster destination account from another saved account.
 - Never run two upload workers writing the same `.part` file.
 - When a source host is slow or unreliable, use cluster-side file size/progress as the source of truth.
 
