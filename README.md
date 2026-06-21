@@ -16,7 +16,7 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Dataset reuse across cluster accounts through verified filesystem permissions or ACLs.
 - Account-local runtime environment copies for cross-account runs.
 - Portal job status checks and native Slurm pending-reason checks.
-- CPU/GRES-safe GPU job submission rules, including native Slurm verification and forced `--gres-flags=disable-binding`.
+- CPU/GRES-safe GPU job submission rules, including native Slurm verification, forced `--gres-flags=disable-binding`, and emergency packed-job CPU fallback.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
 - Safe `sbatch --hold` submit-cap probes that are immediately cancelled and do not start work.
 - Evidence capture for job tables, native allocation snapshots, stdout tails, and launch logs.
@@ -120,7 +120,18 @@ Target native Slurm GPU training shape:
 --gpu 1 --ntasks 1 --cpus-per-task 16 --gres-flags disable-binding
 ```
 
-For normal training, keep `--gres-flags=disable-binding` and start with `16` CPU cores per training task. If `sbatch --test-only` or scheduler constraints reject `16`, retry with `12`, then `8`; treat `8` as the minimum for evidence-producing GPU training.
+For normal training, keep `--gres-flags=disable-binding` and start with `16` CPU cores per training task. If `sbatch --test-only` or scheduler constraints reject `16`, retry with `12`, then `8`; treat `8` as the ordinary minimum for evidence-producing GPU training. For native packed `2GPU` jobs only, if `2GPU/16CPU` is still blocked by `Resources`, reservation constraints, or node CPU availability, test emergency `2GPU/8CPU` with `--ntasks=2 --cpus-per-task=4 --gres=gpu:2` before giving up or switching accounts.
+
+The packed GPU fallback ladder is:
+
+```text
+2GPU/32CPU: --ntasks=2 --cpus-per-task=16 --gres=gpu:2
+2GPU/24CPU: --ntasks=2 --cpus-per-task=12 --gres=gpu:2
+2GPU/16CPU: --ntasks=2 --cpus-per-task=8  --gres=gpu:2
+2GPU/8CPU:  --ntasks=2 --cpus-per-task=4  --gres=gpu:2  (emergency Resources/reservation fallback)
+```
+
+Before replacing a pending packed job, inspect native Slurm reason and node availability. A `Resources` blocker can come from same-node CPU shortage or an active reservation even when GPU summaries appear to show free devices. A pure `Priority` blocker should normally keep its queue position unless the user explicitly accepts a lower-CPU retry.
 
 CPU/GRES-sensitive training should use a native `sbatch` script and then verify `NumCPUs`, `NumTasks`, `CPUs/Task`, and GPU TRES with `scontrol show job <job_id>`. Portal PyTorch/GPU app templates may accept CPU/GRES fields in the helper payload but drop those directives from the generated Slurm script, so portal request fields are not proof of allocation.
 

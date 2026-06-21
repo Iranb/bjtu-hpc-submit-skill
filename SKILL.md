@@ -160,7 +160,7 @@ pgrep -afil "Google Chrome for Testing|playwright|hpc_refresh_flow"
 --gpu 1 --ntasks 1 --cpus-per-task 16 --gres-flags disable-binding
 ```
 
-- For normal GPU training submissions through native Slurm, force `--gres-flags disable-binding` and start with `16` CPU cores per training task. If `sbatch --test-only` or scheduler constraints reject `16`, retry with `12`, then `8`; treat `8` as the minimum for evidence-producing GPU training. Do not request more than `16` CPU cores per task unless the user explicitly asks for a diagnostic probe or a high-CPU override.
+- For normal GPU training submissions through native Slurm, force `--gres-flags disable-binding` and start with `16` CPU cores per training task. If `sbatch --test-only` or scheduler constraints reject `16`, retry with `12`, then `8`. Treat `8` CPU cores per training task as the ordinary minimum. For native packed `2GPU` jobs only, if `2GPU/16CPU` is still blocked by `Resources`, reservation constraints, or node CPU availability, test emergency `2GPU/8CPU` with `--ntasks=2 --cpus-per-task=4 --gres=gpu:2` before giving up or switching accounts. Do not request more than `16` CPU cores per task unless the user explicitly asks for a diagnostic probe or a high-CPU override.
 - Native Slurm equivalent for one GPU:
 
 ```bash
@@ -187,8 +187,12 @@ Known-good shapes on `cluster2`:
 
 ```text
 1 GPU single process:  --ntasks=1 --cpus-per-task=16 --gres=gpu:1 --gres-flags=disable-binding
+1 GPU middle fallback: --ntasks=1 --cpus-per-task=12 --gres=gpu:1 --gres-flags=disable-binding
 1 GPU minimum fallback: --ntasks=1 --cpus-per-task=8  --gres=gpu:1 --gres-flags=disable-binding
-2 GPU packed job:      --ntasks=2 --cpus-per-task=16 --gres=gpu:2 --gres-flags=disable-binding
+2 GPU packed default:  --ntasks=2 --cpus-per-task=16 --gres=gpu:2 --gres-flags=disable-binding
+2 GPU packed middle:   --ntasks=2 --cpus-per-task=12 --gres=gpu:2 --gres-flags=disable-binding
+2 GPU packed minimum:  --ntasks=2 --cpus-per-task=8  --gres=gpu:2 --gres-flags=disable-binding
+2 GPU packed emergency: --ntasks=2 --cpus-per-task=4 --gres=gpu:2 --gres-flags=disable-binding
 ```
 
 ## Native Slurm Packed Jobs
@@ -197,7 +201,7 @@ Use packed jobs only when one Slurm allocation intentionally launches multiple c
 
 Checklist:
 
-1. Request one batch allocation with the required GPU count, `--gres-flags=disable-binding`, and enough CPU for all child experiments. For two single-GPU children, start with `--gres=gpu:2`, `--ntasks=2`, and `--cpus-per-task=16`, which gives 16 CPU cores per child. If rejected, retry with `--cpus-per-task=12`, then `8`; do not go below 8 CPU cores per child.
+1. Request one batch allocation with the required GPU count, `--gres-flags=disable-binding`, and enough CPU for all child experiments. For two single-GPU children, start with `--gres=gpu:2`, `--ntasks=2`, and `--cpus-per-task=16`, which gives 16 CPU cores per child. If rejected, retry with `--cpus-per-task=12`, then `8`. Do not go below 8 CPU cores per child for ordinary packed jobs. If native `2GPU/16CPU` is still blocked by `Resources`, reservation constraints, or node CPU availability, an emergency packed fallback may use `--cpus-per-task=4`, giving 4 CPU cores per child.
 2. In the batch script, read allocation-provided `CUDA_VISIBLE_DEVICES` and split it into child lanes. Do not hardcode physical `0/1`.
 3. For each child, set `CUDA_VISIBLE_DEVICES` to exactly one allocated id, run lightweight `nvidia-smi` and `torch.cuda.device_count()` checks, then launch the experiment.
 4. Save a batch stdout plus one child log per lane.
@@ -210,6 +214,23 @@ cd "$PROJECT_DIR"
 
 6. Verify `JobState=RUNNING`, `Reason=None`, CPU fields, GPU TRES, and node name.
 7. Tail child logs and verify that each child reports one visible CUDA device and has entered real training before calling the launch successful.
+
+Run-slot diagnosis:
+
+- When an account has fewer than two `RUNNING` packed jobs but already has the intended non-terminal backlog, do not assume that submission failed. Inspect native Slurm state first with `hpc_pending_reason.py` and `scontrol show job -dd <job_id>`.
+- For pending run-slot jobs, check `JobState`, `Reason`, `Dependency`, `ReqNodeList`, `ExcNodeList`, `Features`, `OverSubscribe`, `GresEnforceBind`, `NumCPUs`, `NumTasks`, `CPUs/Task`, `TRES`, `TresPerNode`, `SchedNodeList`, `StartTime`, and `LastSchedEval`.
+- If the blocker is `QOSMaxJobsPerUserLimit`, the account is already at its cluster running-job limit and queued follow-ups are behaving normally.
+- If a packed job is already native `2GPU/16CPU` with no dependency, node pin, or feature constraint, re-submitting the same shape is not a repair. If the blocker is `Resources`, reservation constraints, or node CPU availability, an authorized replacement may test emergency `2GPU/8CPU` (`--cpus-per-task=4`) while preserving the child experiment labels and parameters.
+- If the blocker is pure `Priority`, lowering CPU is unlikely to fix scheduler ordering; preserve queue position unless the user explicitly asks to trade queue position for a lower-CPU retry.
+- When free GPUs appear to exist but a packed job still waits for `Resources`, check same-node CPU availability and active reservations, not just GPU counts:
+
+```bash
+sinfo -N -p GPU -o '%N|%t|%C|%G'
+scontrol show node=<node> -o
+scontrol show reservation
+```
+
+A reserved node that does not include the current user/account must be treated as unavailable even if node summaries show idle GPUs or CPUs.
 
 ## Account Scheduling
 
@@ -232,7 +253,7 @@ cd "$SLURM_DIR"
 ```
 
 - Fill each account's two run slots first, then allow up to two queued follow-ups for that same account. Do not submit a fifth non-terminal experiment under the same account unless the user explicitly overrides the cap.
-- Submit each CPU/GRES-sensitive GPU training job as a native Slurm script with explicit project and Python paths, `--gres-flags=disable-binding`, `--ntasks=1`, and `--cpus-per-task=16` first. If `16` is rejected, retry with `12`, then the minimum `8`. Make the job name encode the experiment and slot.
+- Submit each CPU/GRES-sensitive GPU training job as a native Slurm script with explicit project and Python paths, `--gres-flags=disable-binding`, `--ntasks=1`, and `--cpus-per-task=16` first. If `16` is rejected, retry with `12`, then the ordinary minimum `8`. For packed `2GPU` jobs blocked by `Resources`, reservation constraints, or node CPU availability at `2GPU/16CPU`, an authorized replacement may retry emergency `2GPU/8CPU` with `--cpus-per-task=4`. Make the job name encode the experiment and slot.
 - Distinguish submit limits from run limits. A third job may be accepted by `sbatch` but remain pending because the user's current run limit is full. Native pending reason `QOSMaxJobsPerUserLimit` usually means a running-job cap, not necessarily a submit cap.
 - To test whether another submit would be accepted without starting work or touching existing jobs, use a unique held native probe and cancel it immediately:
 
@@ -282,7 +303,7 @@ scontrol show job "$JOB_ID"
 ```
 
 - If strict "start after the previous experiment finishes" ordering is required, use native Slurm dependencies such as `--dependency=afterany:<job_id>` through the SSH/native `sbatch` path. Plain portal submissions may become runnable immediately if scheduler and QOS limits allow them.
-- If `QOSMaxJobsPerUserLimit` blocks two single-GPU run slots for one account, use one native packed job with `--gres=gpu:2 --gres-flags=disable-binding` and start at `16` CPU cores per child experiment; fall back to `12`, then the minimum `8`, only if the larger shapes are rejected. Pack only two experiments per account unless the user explicitly approves more.
+- If `QOSMaxJobsPerUserLimit` blocks two single-GPU run slots for one account, use one native packed job with `--gres=gpu:2 --gres-flags=disable-binding` and start at `16` CPU cores per child experiment; fall back to `12`, then the ordinary minimum `8`, only if the larger shapes are rejected. If `2GPU/16CPU` remains blocked by `Resources`, reservation constraints, or node CPU availability, test emergency `2GPU/8CPU` with `4` CPU cores per child before giving up. Pack only two experiments per account unless the user explicitly approves more.
 - If queued follow-up submissions hit a submit cap such as `QOSMaxSubmitJobPerUserLimit`, record them in the local launch plan and submit when a run slot clears instead of retrying in a loop.
 
 ## Paths
@@ -381,6 +402,6 @@ Before reporting a job as running:
 - For cross-account dataset sharing, inspect ACLs first; do not apply ACL/chmod changes without explicit confirmation.
 - Multi-account launches must keep account-local code, outputs, and environments under the corresponding cluster OS home. Shared datasets can cross accounts by ACL or symlink, but runtime paths should not cross accounts.
 - For experiment batches, cap each saved auth account at two run-slot experiments plus two queued follow-up experiments unless the user explicitly overrides the cap.
-- For CPU/GRES-sensitive GPU training, use native Slurm, force `--gres-flags=disable-binding`, and try `16` CPU cores per training task first. Fall back to `12`, then `8`, only if needed; do not go below `8` unless the user explicitly requests a non-training diagnostic probe.
+- For CPU/GRES-sensitive GPU training, use native Slurm, force `--gres-flags=disable-binding`, and try `16` CPU cores per training task first. Fall back to `12`, then `8`, only if needed. For packed `2GPU` jobs blocked by `Resources`, reservation constraints, or node CPU availability, emergency `2GPU/8CPU` with `4` CPU cores per child is allowed after `2GPU/16CPU` fails. Do not go below `8` CPUs per child for ordinary training jobs or below `4` CPUs per child for emergency packed jobs.
 - Do not rely on portal PyTorch/GPU app templates to enforce `--cpus-per-task` or `--gres-flags`; verify with native Slurm or treat the resource shape as untrusted.
 - Do not publish tokens, cookies, passwords, one-time certificate strings, local absolute paths, student ids, or project-specific job evidence.
