@@ -16,10 +16,12 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Dataset reuse across cluster accounts through verified filesystem permissions or ACLs.
 - Account-local runtime environment copies for cross-account runs.
 - Portal job status checks and native Slurm pending-reason checks.
-- CPU/GRES-safe GPU job submission rules, including native Slurm verification, forced `--gres-flags=disable-binding`, emergency packed-job CPU fallback, and 2GPU-to-1GPU compatibility fallback.
+- CPU/GRES-safe GPU job submission rules, including monitor-snapshot resource selection, exact native Slurm preflight, forced `--gres-flags=disable-binding`, emergency packed-job CPU fallback, GPU-fill fragment jobs, and 2GPU-to-1GPU compatibility fallback.
 - Fast native queue summaries across saved accounts through `hpc_queue_summary.py`.
 - Optional macOS menu bar monitor and compact desktop widget for queue and GPU-node status.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
+- Planner-guided one-by-one submissions through `hpc_resource_planner.py`, with `--available-children` / child-manifest gating before wide 3-8GPU jobs.
+- Native N-child script generation and exact-script preflight through `hpc_native_sbatch_builder.py` and `hpc_native_submit.py`.
 - Safe `sbatch --hold` submit-cap probes that are immediately cancelled and do not start work.
 - Evidence capture for job tables, native allocation snapshots, stdout tails, and launch logs.
 
@@ -49,6 +51,9 @@ The skill assumes you have a local BJTU helper workspace that provides scripts s
 - `hpc_transfer_web.py`
 - `hpc_jobs.py`
 - `hpc_pending_reason.py`
+- `hpc_resource_planner.py`
+- `hpc_native_sbatch_builder.py`
+- `hpc_native_submit.py`
 - `hpc_submit.py`
 - `hpc_submit_verified.py`
 - `hpc_upload.py`
