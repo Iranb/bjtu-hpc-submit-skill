@@ -18,6 +18,7 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Portal job status checks and native Slurm pending-reason checks.
 - CPU/GRES-safe GPU job submission rules, including native Slurm verification, forced `--gres-flags=disable-binding`, emergency packed-job CPU fallback, and 2GPU-to-1GPU compatibility fallback.
 - Fast native queue summaries across saved accounts through `hpc_queue_summary.py`.
+- Optional macOS menu bar monitor and compact desktop widget for queue and GPU-node status.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
 - Safe `sbatch --hold` submit-cap probes that are immediately cancelled and do not start work.
 - Evidence capture for job tables, native allocation snapshots, stdout tails, and launch logs.
@@ -54,6 +55,7 @@ The skill assumes you have a local BJTU helper workspace that provides scripts s
 - `hpc_download.py`
 - `hpc_winscp_info.py`
 - `hpc_share_check.py`
+- optional `mac_hpc_monitor/` scripts for the macOS monitor and desktop widget
 
 The helper scripts are not included in this repository. Set these shell variables before using the examples:
 
@@ -61,6 +63,31 @@ The helper scripts are not included in this repository. Set these shell variable
 PY=/path/to/python3
 SLURM_DIR=/path/to/bjtu-hpc-helper
 PROJECT_DIR=/path/to/your/project
+```
+
+## Optional macOS Monitor
+
+The `mac_hpc_monitor/` directory contains a sanitized menu bar monitor and a compact floating desktop widget. They read saved accounts through the local helper workspace and call:
+
+```bash
+hpc_queue_summary.py --json
+```
+
+Configure the helper path before launching or installing:
+
+```bash
+export HPC_MONITOR_PYTHON=python3
+export HPC_MONITOR_SLURM_DIR=/path/to/bjtu-hpc-helper
+export HPC_MONITOR_INTERVAL=60
+export HPC_MONITOR_MAX_INTERVAL=600
+```
+
+The monitor uses adaptive idempotent refreshes: unchanged queue and cluster GPU/CPU state increases the next polling interval linearly up to `HPC_MONITOR_MAX_INTERVAL`; any job-state, pending-reason, node GPU/CPU, or reservation-exclusion change resets it to `HPC_MONITOR_INTERVAL`.
+
+```bash
+cd mac_hpc_monitor
+./hpc_desktop_widget.py --preview /tmp/bjtu_hpc_widget_preview.png
+./install_hpc_desktop_widget.sh
 ```
 
 ## Dashboard And Token Guardian

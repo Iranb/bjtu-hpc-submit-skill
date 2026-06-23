@@ -6,3 +6,8 @@ __pycache__/
 *.jsonl
 hpc_stdout/
 *.token
+*.app/
+*.app
+bjtu_hpc_widget_preview.png
+BJTUHPCWidget/
+BJTUHPCMonitor/
