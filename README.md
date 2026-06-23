@@ -16,7 +16,8 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Dataset reuse across cluster accounts through verified filesystem permissions or ACLs.
 - Account-local runtime environment copies for cross-account runs.
 - Portal job status checks and native Slurm pending-reason checks.
-- CPU/GRES-safe GPU job submission rules, including native Slurm verification, forced `--gres-flags=disable-binding`, and emergency packed-job CPU fallback.
+- CPU/GRES-safe GPU job submission rules, including native Slurm verification, forced `--gres-flags=disable-binding`, emergency packed-job CPU fallback, and 2GPU-to-1GPU compatibility fallback.
+- Fast native queue summaries across saved accounts through `hpc_queue_summary.py`.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
 - Safe `sbatch --hold` submit-cap probes that are immediately cancelled and do not start work.
 - Evidence capture for job tables, native allocation snapshots, stdout tails, and launch logs.
