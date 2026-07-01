@@ -16,7 +16,7 @@ GitHub: [Iranb/bjtu-hpc-submit-skill](https://github.com/Iranb/bjtu-hpc-submit-s
 - Dataset reuse across cluster accounts through verified filesystem permissions or ACLs.
 - Account-local runtime environment copies for cross-account runs.
 - Portal job status checks and native Slurm pending-reason checks.
-- CPU/GRES-safe GPU job submission rules, including monitor-snapshot resource selection, exact native Slurm preflight, forced `--gres-flags=disable-binding`, emergency packed-job CPU fallback, GPU-fill fragment jobs, and 2GPU-to-1GPU compatibility fallback.
+- CPU/GRES-safe GPU job submission rules, including monitor-snapshot resource selection, exact native Slurm preflight, forced `--gres-flags=disable-binding`, ordinary `1GPU/6CPU` requests, resource-wait `1GPU/4CPU` fallback, low-VRAM GPU-sharing, GPU-fill fragment jobs, and 2GPU-to-1GPU compatibility fallback.
 - Fast native queue summaries across saved accounts through `hpc_queue_summary.py`.
 - Optional macOS menu bar monitor and compact desktop widget for queue and GPU-node status.
 - Packed multi-GPU Slurm jobs that respect allocated `CUDA_VISIBLE_DEVICES`.
@@ -149,21 +149,21 @@ squeue -j "$PROBE_JOB_ID"
 
 The probe should have a unique name, short time limit, and the same resource shape being tested. It should be cancelled immediately and should not replace or cancel any unrelated job.
 
-Target native Slurm GPU training shape:
+Ordinary native Slurm GPU training shape:
 
 ```bash
---gpu 1 --ntasks 1 --cpus-per-task 16 --gres-flags disable-binding
+--gpu 1 --ntasks 1 --cpus-per-task 6 --gres-flags disable-binding
 ```
 
-For normal training, keep `--gres-flags=disable-binding` and start with `16` CPU cores per training task. If `sbatch --test-only` or scheduler constraints reject `16`, retry with `12`, then `8`; treat `8` as the ordinary minimum for evidence-producing GPU training. For native packed `2GPU` jobs only, if `2GPU/16CPU` is still blocked by `Resources`, reservation constraints, or node CPU availability, test emergency `2GPU/8CPU` with `--ntasks=2 --cpus-per-task=4 --gres=gpu:2` before giving up or switching accounts.
+For normal training, keep `--gres-flags=disable-binding` and start with `6` CPU cores per independent one-GPU child. If `sbatch --test-only` shows the 1:6 shape cannot run directly because of `Resources`, reservation constraints, same-node CPU pressure, or GPU/GRES shape pressure, fall back to `4` CPU cores per child. Do not lower CPU for pure `Priority`, dependency holds, or `QOSMaxJobsPerUserLimit`. CPU-rich `1:8`, `1:12`, or `1:16` shapes are optional only when explicitly requested or when test-only proves immediate start without reducing GPU occupancy.
 
-The packed GPU fallback ladder is:
+The packed GPU shape ladder is:
 
 ```text
-2GPU/32CPU: --ntasks=2 --cpus-per-task=16 --gres=gpu:2
-2GPU/24CPU: --ntasks=2 --cpus-per-task=12 --gres=gpu:2
-2GPU/16CPU: --ntasks=2 --cpus-per-task=8  --gres=gpu:2
-2GPU/8CPU:  --ntasks=2 --cpus-per-task=4  --gres=gpu:2  (emergency Resources/reservation fallback)
+2GPU/12CPU: --ntasks=2 --cpus-per-task=6 --gres=gpu:2  (ordinary default)
+2GPU/8CPU:  --ntasks=2 --cpus-per-task=4 --gres=gpu:2  (Resources/reservation/same-node-CPU fallback)
+CPU-rich optional: --ntasks=2 --cpus-per-task=<8|12|16> --gres=gpu:2, only with explicit CPU-rich intent or immediate-start proof
+Low-VRAM sharing: --ntasks=<2N> --cpus-per-task=<C> --gres=gpu:<N>, max two child processes per V100 when each child peaks below 16GB
 ```
 
 Before replacing a pending packed job, inspect native Slurm reason and node availability. A `Resources` blocker can come from same-node CPU shortage or an active reservation even when GPU summaries appear to show free devices. A pure `Priority` blocker should normally keep its queue position unless the user explicitly accepts a lower-CPU retry.
