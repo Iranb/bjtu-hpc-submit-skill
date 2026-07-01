@@ -99,7 +99,9 @@ cd mac_hpc_monitor
 
 The local dashboard can manage saved CAS logins, refresh and validate portal tokens, create resumable upload tasks, launch uploads, show cluster-side progress, and list portal jobs. Saved passwords must stay in a local credentials store with restrictive permissions; the UI should only show whether a password exists.
 
-Token Guardian is a background validator and best-effort headless refresher. Use a conservative default of a 300 second validation interval and a 1800 second refresh threshold. Treat a headless refresh as actually successful only when validation succeeds and the saved token changes or the account `token_updated_at` advances. If headless refresh times out while final validation still succeeds, the old token is still usable but renewal was not proven.
+Token Guardian is a background validator and best-effort headless refresher. Use conservative defaults of a 300 second validation interval, a 1800 second refresh threshold, and a 5-day token-age warning threshold. A token-age warning is pre-expiry maintenance, not proof that the token is invalid. Treat a headless refresh as actually successful only when validation succeeds and the saved token changes or the account `token_updated_at` advances. If headless refresh times out while final validation still succeeds, the old token is still usable but renewal was not proven.
+
+The desktop widget may show token-risky accounts in purple from either queue auth errors or Token Guardian attention states such as `token_age`, `headless_failures`, or `needs_visible_login`. Clicking a purple account card should call the local dashboard visible-refresh endpoint for that account; the user still needs to complete CAS verification in the opened Playwright window.
 
 In multi-account workflows, upload tasks should include `auth_account` so launch commands, SFTP certificate lookup, and progress checks use the correct saved account instead of hardcoded defaults. If the dashboard is installed as a user service, service status output should be redacted before printing raw environment or service-manager details.
 
